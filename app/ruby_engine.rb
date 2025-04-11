@@ -41,17 +41,17 @@ class RubyEngine
   ENGINES = [
     # https://www.jsdelivr.com/package/npm/@ruby/3.4-wasm-wasi?tab=files&path=dist&version=2.7.1
     CRubyWASI.new(
-      "https://cdn.jsdelivr.net/npm/@ruby/3.4-wasm-wasi@2.7.1/dist/ruby.wasm",
+      "https://cdn.jsdelivr.net/npm/@ruby/3.4-wasm-wasi@2.7.1/dist/ruby+stdlib.wasm",
       "3.4.2"
     ),
     # https://www.jsdelivr.com/package/npm/@ruby/3.3-wasm-wasi?tab=files&path=dist&version=2.7.1
     CRubyWASI.new(
-      "https://cdn.jsdelivr.net/npm/@ruby/3.3-wasm-wasi@2.7.1/dist/ruby.wasm",
+      "https://cdn.jsdelivr.net/npm/@ruby/3.3-wasm-wasi@2.7.1/dist/ruby+stdlib.wasm",
       "3.3.0"
     ),
     # https://www.jsdelivr.com/package/npm/@ruby/3.2-wasm-wasi?tab=files&path=dist&version=2.7.1
     CRubyWASI.new(
-      "https://cdn.jsdelivr.net/npm/@ruby/3.2-wasm-wasi@2.7.1/dist/ruby.wasm",
+      "https://cdn.jsdelivr.net/npm/@ruby/3.2-wasm-wasi@2.7.1/dist/ruby+stdlib.wasm",
       "3.2.2"
     ),
     # Opal.new,
