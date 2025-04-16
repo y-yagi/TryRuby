@@ -7,8 +7,8 @@ class RubyEngine
     REQUIRED_SCRIPTS = [
         {
             # https://www.jsdelivr.com/package/npm/@ruby/wasm-wasi?version=2.7.1&tab=files&path=dist
-            src: "https://cdn.jsdelivr.net/npm/@ruby/wasm-wasi@2.7.1/dist/index.umd.js",
-            integrity: "sha256-7XF6z0eO7h/WdqnK+nL8VapdakFYyBSZrdml5+m6p6M=",
+            src: "https://cdn.jsdelivr.net/npm/@ruby/wasm-wasi@2.7.1/dist/browser.umd.js",
+            integrity: "sha256-7BFeYf6/25URj7e1BHDr2wN2zWD0ISeSXbbLYWXNrmc=",
             crossorigin: "anonymous"
         },
         {
@@ -60,7 +60,7 @@ class RubyEngine
     end
 
     def run(source)
-      `var $WASI, $WasmFs, $RubyVM`
+      `var $WASI, $WasmFs, $DefaultRubyVM`
       wasmInstance, wasmModule, vm, wasi, imports = nil
 
       loading("downloading scripts") { CRubyWASI.inject_scripts.await }
@@ -68,7 +68,7 @@ class RubyEngine
       loading("early load") do
         `$WASI = window["WASI"].WASI`
         `$WasmFs = window["WasmFs"].WasmFs`
-        `$RubyVM = window["ruby-wasm-wasi"].RubyVM`
+        `$DefaultRubyVM = window["ruby-wasm-wasi"].DefaultRubyVM`
 
         wasmFs = `new $WasmFs()`
         originalWriteSync = `wasmFs.fs.writeSync.bind(wasmFs.fs)`
@@ -83,12 +83,6 @@ class RubyEngine
           };
         }
 
-        vm = `new $RubyVM()`
-        wasi = `new $WASI({
-          bindings: { ...$WASI.defaultBindings, fs: wasmFs.fs },
-        })`
-        imports = `{ wasi_snapshot_preview1: wasi.wasiImport }`
-        `vm.addToImports(imports)`
       end
 
       loading("downloading ruby") do
@@ -96,13 +90,95 @@ class RubyEngine
       end
 
       loading("instantiating") do
-        wasmInstance = `WebAssembly.instantiate(wasmModule, imports)`.await
+        # vm, wasi = `$RubyDefaultVM(wasmModule, { bindings: { ...$WASI.defaultBindings, fs: wasmFs.fs } })`.await
+        # wasi = `new $WASI({
+        #   bindings: { ...$WASI.defaultBindings, fs: wasmFs.fs },
+        # })`
+        # imports = `{ wasi_snapshot_preview1: wasi.wasiImport }`
+        # `vm.addToImports(imports)`
       end
 
+    %x{
+      function myPrinter() {
+        let memory = undefined;
+        let _view = undefined;
+          function getMemoryView() {
+              if (typeof memory === "undefined") {
+                  throw new Error("Memory is not set");
+              }
+              if (_view === undefined || _view.buffer.byteLength === 0) {
+                  _view = new DataView(memory.buffer);
+              }
+              return _view;
+          }
+          const decoder = new TextDecoder();
+          return {
+              addToImports(imports) {
+                  const wasiImport = imports.wasi_snapshot_preview1;
+                  const original_fd_write = wasiImport.fd_write;
+                  wasiImport.fd_write = (fd, iovs, iovsLen, nwritten) => {
+                      if (fd !== 1 && fd !== 2) {
+                          return original_fd_write(fd, iovs, iovsLen, nwritten);
+                      }
+                      const view = getMemoryView();
+                      const buffers = Array.from({ length: iovsLen }, (_, i) => {
+                          const ptr = iovs + i * 8;
+                          const buf = view.getUint32(ptr, true);
+                          const bufLen = view.getUint32(ptr + 4, true);
+                          return new Uint8Array(memory.buffer, buf, bufLen);
+                      });
+                      let written = 0;
+                      let str = "";
+                      for (const buffer of buffers) {
+                          str += decoder.decode(buffer);
+                          written += buffer.byteLength;
+                      }
+                      view.setUint32(nwritten, written, true);
+                      #{@writer.print_to_output(`str`, "")}
+                      return 0;
+                  };
+                  const original_fd_filestat_get = wasiImport.fd_filestat_get;
+                  wasiImport.fd_filestat_get = (fd, filestat) => {
+                      if (fd !== 1 && fd !== 2) {
+                          return original_fd_filestat_get(fd, filestat);
+                      }
+                      const view = getMemoryView();
+                      const result = original_fd_filestat_get(fd, filestat);
+                      if (result !== 0) {
+                          return result;
+                      }
+                      const filetypePtr = filestat + 0;
+                      view.setUint8(filetypePtr, 2); // FILETYPE_CHARACTER_DEVICE
+                      return 0;
+                  };
+                  const original_fd_fdstat_get = wasiImport.fd_fdstat_get;
+                  wasiImport.fd_fdstat_get = (fd, fdstat) => {
+                      if (fd !== 1 && fd !== 2) {
+                          return original_fd_fdstat_get(fd, fdstat);
+                      }
+                      const view = getMemoryView();
+                      const fs_filetypePtr = fdstat + 0;
+                      view.setUint8(fs_filetypePtr, 2); // FILETYPE_CHARACTER_DEVICE
+                      const fs_rights_basePtr = fdstat + 8;
+                      // See https://github.com/WebAssembly/WASI/blob/v0.2.0/legacy/preview1/docs.md#record-members
+                      const RIGHTS_FD_WRITE = 1 << 6;
+                      view.setBigUint64(fs_rights_basePtr, BigInt(RIGHTS_FD_WRITE), true);
+                      return 0;
+                  };
+              },
+              setMemory(m) {
+                  memory = m;
+              },
+          };
+      }}
       loading("initializing") do await
-        `vm.setInstance(wasmInstance)`.await
-        `wasi.setMemory(wasmInstance.exports.memory)`
-        `vm.initialize()`
+        # `vm.setInstance(wasmInstance)`.await
+        # `wasi.setMemory(wasmInstance.exports.memory)`
+        # `vm.initialize()`
+        defaultVM = `$DefaultRubyVM(wasmModule, { consolePrint: myPrinter })`.await
+        vm = `defaultVM["vm"]`
+        wasi = `defaultVM["wasi"]`
+        wasmInstance = `defaultVM["instance"]`
         set_external_encoding = "Encoding.default_external = Encoding::UTF_8"
         `vm.eval(set_external_encoding)`
       end
